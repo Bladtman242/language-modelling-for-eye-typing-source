@@ -15,6 +15,12 @@ let FRAMES_PER_SECOND = 60.0
 let REVOLUTIONS_PER_SECOND = 1.0/5.0
 let WINDOW_SIZE = int <| CIRCLE_RADIUS * 2.0 * 1.4
 
+let letters = ["A"; "B"; "C"; "D"; "E"; "F"; "G"; "H"; "I"; "J"; "K"; "L"; "M";
+               "N"; "O"; "P"; "Q"; "R"; "S"; "T"; "U"; "V"; "W"; "X"; "Y"; "Z";]
+
+let empty_symtable = List.fold (fun m l -> Map.add l [] m) Map.empty letters
+let empty_timeWindow = ([], empty_symtable)
+
 let radiansOfDegrees d = System.Math.PI/180.0 * d
 let degreesOfRadians r = 180.0/System.Math.PI * r
 
@@ -117,23 +123,21 @@ let drawSymbol idx ((s,p) : symbol) (chosen : int option) font (gr : System.Draw
 let drawSymbols (syms : symbol list) (chosen : int option) =
     let chart = new Bitmap(WINDOW_SIZE,WINDOW_SIZE)
     use gr = Graphics.FromImage(chart)
-    List.iteri (fun idx sym -> drawSymbol idx sym chosen mainForm.Font gr) syms //fsharp's typesystem needs a hint here.
+    List.iteri (fun idx sym -> drawSymbol idx sym chosen mainForm.Font gr) syms
     boxChart.Image <- chart
     ()
 
-let letters = ["A"; "B"; "C"; "D"; "E"; "F"; "G"; "H"; "I"; "J"; "K"; "L"; "M";
-               "N"; "O"; "P"; "Q"; "R"; "S"; "T"; "U"; "V"; "W"; "X"; "Y"; "Z";]
-
-let runner () =
-    let rec _runner (fpsAdjust : float) (offset : float) (tw : timewindow) (corr : (string * float) list) (chosen : int option) : Unit =
+let mainLoop () =
+    let rec _mainLoop (fpsAdjust : float) (offset : float) (tw : timewindow) (corr : (string * float) list) (chosen : int option) : Unit =
         Thread.Sleep (max 0 (int (1000.0/FRAMES_PER_SECOND - fpsAdjust)))
         let start = DateTime.Now
         let syms = placeSyms letters offset
-        ignore <| drawSymbols syms chosen
+
         let coord = convertPoint <| boxChart.PointToClient Control.MousePosition
         let tw' = addFrame coord syms tw
-        let correlations = correlationsInWindow tw' |> List.filter (snd >> System.Double.IsNaN >> not)
-                                              |> List.filter (fun (_,c) -> c >= 0.99)
+        let correlations = correlationsInWindow tw'
+                           |> List.filter (not << System.Double.IsNaN << snd)
+                           |> List.filter (fun (_,c) -> c >= 0.99)
         let correlated = not <| List.isEmpty correlations
         let offset' = offset + REVOLUTIONS_PER_SECOND/FRAMES_PER_SECOND * 360.0
         let chosen' = if correlated then List.index (fst (List.head correlations)) letters else None
@@ -142,15 +146,17 @@ let runner () =
         let corr' = if correlated then corr @ [(List.head correlations)]
                     else corr
 
+        ignore <| drawSymbols syms chosen'
+
         let time = (DateTime.Now - start).TotalMilliseconds
-        _runner time offset' tw' corr' chosen'
-    ignore <| _runner 0.0 0.0 ([], List.fold (fun m l -> Map.add l [] m) Map.empty letters) [] None
+        _mainLoop time offset' tw' corr' chosen'
+    ignore <| _mainLoop 0.0 0.0 empty_timeWindow [] None
 
 [<STAThread>]
 [<EntryPoint>]
 let main args = 
     mainForm.Closed.Add (fun _ -> Environment.Exit 0)
-    Async.Start (async {runner ()})
+    Async.Start (async {mainLoop ()})
     //btnOpen.Click.Add(drawPieChart)
     Application.EnableVisualStyles()
     Application.Run(mainForm);
