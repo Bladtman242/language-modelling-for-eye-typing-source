@@ -3,6 +3,7 @@ open System
 open System.Threading
 open System.Drawing
 open System.Windows.Forms
+open ListExtensions
 
 type point = System.Drawing.PointF
 type symbol = (string * point)
@@ -25,23 +26,6 @@ let radiansOfDegrees d = System.Math.PI/180.0 * d
 let degreesOfRadians r = 180.0/System.Math.PI * r
 
 let convertPoint (p : Point) : point = new point (float32 p.X, float32 p.Y)
-
-module List =
-    let truncateTo n l =
-        let rec skip n xs = if (n <= 0) then xs
-                            else skip (n-1) (List.tail xs)
-
-        let len = List.length l
-        if (n < len) then
-            skip (len - n) l
-        else l
-
-    let index (e : 'a) (l: 'a list) : int option =
-        try
-            Some <| List.findIndex (fun x -> x = e) l
-        with
-        | :? System.Collections.Generic.KeyNotFoundException as ex -> 
-              None
 
 let truncateWindow = List.truncateTo FRAME_SIZE
 
@@ -114,50 +98,57 @@ let placeSyms (syms : string list) (offset : float) : symbol list =
 
     List.mapi (fun i s -> symAndPoint i s) syms
 
-let drawSymbol idx ((s,p) : symbol) (chosen : int option) font (gr : System.Drawing.Graphics) : Unit =
+let drawSymbol idx ((s,p) : symbol) (chosen : int option) (font : Font) (gr : System.Drawing.Graphics) : Unit =
     let col = Option.fold (fun col ch -> if abs (ch-idx) < 2 then Color.Red else col) Color.Black chosen
     let brush = new SolidBrush(col)
+    let letterSizeCorrection = int(-font.GetHeight()) / 2 //only approximates the correction on the y-axis
+    let p' = PointF.Add(p, Size(letterSizeCorrection, letterSizeCorrection))
 
-    gr.DrawString(s, mainForm.Font, brush, (p : System.Drawing.PointF))
+    gr.DrawString(s, font, brush, (p : System.Drawing.PointF))
 
 let drawSymbols (syms : symbol list) (chosen : int option) =
     let chart = new Bitmap(WINDOW_SIZE,WINDOW_SIZE)
     use gr = Graphics.FromImage(chart)
     List.iteri (fun idx sym -> drawSymbol idx sym chosen mainForm.Font gr) syms
-    boxChart.Image <- chart
-    ()
+    mainForm.Invoke(System.Func<unit,unit>(fun () -> ignore <| boxChart.Image <- chart), ())
 
 let mainLoop () =
-    let rec _mainLoop (fpsAdjust : float) (offset : float) (tw : timewindow) (corr : (string * float) list) (chosen : int option) : Unit =
-        Thread.Sleep (max 0 (int (1000.0/FRAMES_PER_SECOND - fpsAdjust)))
+    let rec _mainLoop (fpsAdjust : float) (offset : float) (tw : timewindow) (corr : (string * float) list) (chosen : int option) (latent_period : float) : Unit =
+        let sleepTime = max 0 (int (1000.0/FRAMES_PER_SECOND - fpsAdjust))
+        Thread.Sleep sleepTime
         let start = DateTime.Now
         let syms = placeSyms letters offset
+        let offset' = offset + REVOLUTIONS_PER_SECOND/FRAMES_PER_SECOND * 360.0
 
         let coord = convertPoint <| boxChart.PointToClient Control.MousePosition
         let tw' = addFrame coord syms tw
-        let correlations = correlationsInWindow tw'
-                           |> List.filter (not << System.Double.IsNaN << snd)
-                           |> List.filter (fun (_,c) -> c >= 0.99)
-        let correlated = not <| List.isEmpty correlations
-        let offset' = offset + REVOLUTIONS_PER_SECOND/FRAMES_PER_SECOND * 360.0
-        let chosen' = if correlated then List.index (fst (List.head correlations)) letters else None
+        if 0.0 >= latent_period then
+            let correlations = correlationsInWindow tw'
+                               |> List.filter (not << System.Double.IsNaN << snd)
+                               |> List.filter (fun (_,c) -> c >= 0.99)
+            let correlated = not <| List.isEmpty correlations
+            let chosen' = if correlated then List.index (fst (List.head correlations)) letters else None
 
-        if correlated then printfn "follows %A" (List.head correlations)
-        let corr' = if correlated then corr @ [(List.head correlations)]
-                    else corr
+            if correlated then printfn "follows %A" (List.head correlations)
+            let corr' = if correlated then corr @ [(List.head correlations)]
+                        else corr
+            let latent_period = if correlated then 600.0 else 0.0
+            ignore <| drawSymbols syms chosen'
 
-        ignore <| drawSymbols syms chosen'
+            let time = (DateTime.Now - start).TotalMilliseconds
+            _mainLoop time offset' tw' corr' chosen' latent_period
+        else
+            ignore <| drawSymbols syms None
 
-        let time = (DateTime.Now - start).TotalMilliseconds
-        _mainLoop time offset' tw' corr' chosen'
-    ignore <| _mainLoop 0.0 0.0 empty_timeWindow [] None
+            let time = (DateTime.Now - start).TotalMilliseconds
+            _mainLoop time offset' tw' corr None (latent_period - (time + float sleepTime))
+    ignore <| _mainLoop 0.0 0.0 empty_timeWindow [] None 0.0
 
 [<STAThread>]
 [<EntryPoint>]
 let main args = 
     mainForm.Closed.Add (fun _ -> Environment.Exit 0)
     Async.Start (async {mainLoop ()})
-    //btnOpen.Click.Add(drawPieChart)
     Application.EnableVisualStyles()
     Application.Run(mainForm);
     0
