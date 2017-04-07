@@ -3,18 +3,18 @@ open System
 open System.Threading
 open System.Drawing
 open System.Windows.Forms
-open ListExtensions
 
 type point = System.Drawing.PointF
 type symbol = (string * point)
 type symtable = Map<string,point list>
 type timewindow = point list * symtable
 
-let FRAME_SIZE = 60
+let FRAME_SIZE = 50
 let CIRCLE_RADIUS = 150.0; //pixels
 let FRAMES_PER_SECOND = 60.0
 let REVOLUTIONS_PER_SECOND = 1.0/5.0
 let WINDOW_SIZE = int <| CIRCLE_RADIUS * 2.0 * 1.4
+let CHOICE_LATENCY = 700.0
 
 let letters = ["A"; "B"; "C"; "D"; "E"; "F"; "G"; "H"; "I"; "J"; "K"; "L"; "M";
                "N"; "O"; "P"; "Q"; "R"; "S"; "T"; "U"; "V"; "W"; "X"; "Y"; "Z";]
@@ -27,7 +27,7 @@ let degreesOfRadians r = 180.0/System.Math.PI * r
 
 let convertPoint (p : Point) : point = new point (float32 p.X, float32 p.Y)
 
-let truncateWindow = List.truncateTo FRAME_SIZE
+let truncateWindow = List.truncate FRAME_SIZE
 
 let addFrame (mousePos : point) (syms: symbol list) (tw : timewindow) : timewindow =
     let mousepositions = fst tw @ [mousePos] |> truncateWindow
@@ -41,11 +41,11 @@ let pearson (xs : float list) (ys : float list) : float =
     if (List.length xs <> List.length ys) then raise (System.ArgumentException("xs and ys must be of equal length"))
     else let xsAvg = List.average xs
          let ysAvg = List.average ys
-         let xs' = List.map (fun x -> x - xsAvg) xs
-         let ys' = List.map (fun y -> y - ysAvg) ys
-         let covariance = List.sum (List.map2 (*) xs' ys')
-         let xsStdDev = List.map (fun x -> x ** 2.0) xs' |> List.sum |> sqrt
-         let ysStdDev = List.map (fun x -> x ** 2.0) ys' |> List.sum |> sqrt
+         let xVariances = List.map (fun x -> x - xsAvg) xs
+         let yVariances = List.map (fun y -> y - ysAvg) ys
+         let covariance = List.sum (List.map2 (*) xVariances yVariances)
+         let xsStdDev = List.map (fun x -> x ** 2.0) xVariances |> List.sum |> sqrt
+         let ysStdDev = List.map (fun x -> x ** 2.0) yVariances |> List.sum |> sqrt
          covariance / (xsStdDev * ysStdDev)
 
 let pearsonXY xs ys xs' ys' = min (pearson xs xs') (pearson ys ys')
@@ -127,12 +127,12 @@ let mainLoop () =
                                |> List.filter (not << System.Double.IsNaN << snd)
                                |> List.filter (fun (_,c) -> c >= 0.99)
             let correlated = not <| List.isEmpty correlations
-            let chosen' = if correlated then List.index (fst (List.head correlations)) letters else None
+            let chosen' = if correlated then List.tryFindIndex (fun x -> x =  fst (List.head correlations)) letters else None
 
             if correlated then printfn "follows %A" (List.head correlations)
             let corr' = if correlated then corr @ [(List.head correlations)]
                         else corr
-            let latent_period = if correlated then 600.0 else 0.0
+            let latent_period = if correlated then CHOICE_LATENCY else 0.0
             ignore <| drawSymbols syms chosen'
 
             let time = (DateTime.Now - start).TotalMilliseconds
