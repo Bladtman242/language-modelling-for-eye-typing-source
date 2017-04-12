@@ -3,6 +3,7 @@ open System
 open System.Threading
 open System.Drawing
 open System.Windows.Forms
+open ListExtensions
 
 type point = System.Drawing.PointF
 type symbol = (string * point)
@@ -27,7 +28,7 @@ let degreesOfRadians r = 180.0/System.Math.PI * r
 
 let convertPoint (p : Point) : point = new point (float32 p.X, float32 p.Y)
 
-let truncateWindow = List.truncate FRAME_SIZE
+let truncateWindow = List.truncateLeftTo FRAME_SIZE
 
 let addFrame (mousePos : point) (syms: symbol list) (tw : timewindow) : timewindow =
     let mousepositions = fst tw @ [mousePos] |> truncateWindow
